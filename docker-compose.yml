@@ -1,0 +1,63 @@
+---
+version: "3"
+services:
+  elk_elasticsearch:
+    container_name: elk_elasticsearch
+    image: "elasticsearch:5.4.0-alpine"
+    command: 'elasticsearch -Ebootstrap.memory_lock="true" -Ecluster.name="elk" -Ediscovery.zen.minimum_master_nodes="1" -Ehttp.host="0.0.0.0" -Enetwork.host="0.0.0.0" -Etransport.host=127.0.0.1'
+    volumes:
+     - /srv/elk/elasticsearch:/usr/share/elasticsearch/data
+    environment:
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+     - "9200:9200"
+     - "9300:9300"
+    restart: always
+    deploy:
+      mode: global
+  elk_kibana:
+    container_name: elk_kibana
+    build: ./elk_kibana
+    image: "kibana-with-logtrail:5.4.0"
+    command: 'kibana -e http://elasticsearch:9200'
+    ports:
+     - "5601:5601"
+    restart: always
+    deploy:
+      mode: global
+    links:
+     - elk_elasticsearch:elasticsearch
+  elk_logstash:
+    container_name: elk_logstash
+    command: "logstash -f /usr/share/logstash/pipeline/logstash.conf"
+    build: ./elk_logstash
+    image: "logstash-with-config:5.4.0"
+    ports:
+     - "5044:5044"
+     - "9514:9514/tcp"
+     - "9514:9514/udp"
+    restart: always
+    deploy:
+      mode: global
+    links:
+     - elk_elasticsearch:elasticsearch
+    volumes:
+     - ./pipeline:/usr/share/logstash/pipeline:ro
+     - /var/log/journal:/var/log/journal:ro
+     - /srv/elk/logstash:/var/lib/logstash
+     - /sys:/sys:ro
+  elk_metrics:
+    container_name: elk_metrics
+    image: "docker.elastic.co/beats/metricbeat:5.4.0"
+    command: "metricbeat -e -system.hostfs=/hostfs"
+    volumes:
+     - /proc:/hostfs/proc:ro
+     - /sys/fs/cgroup:/hostfs/sys/fs/cgroup:ro
+     - /:/hostfs:ro
+     - ./metricbeat.yml:/usr/share/metricbeat/metricbeat.yml
+    # net: "host"
+    restart: always
+    deploy:
+      mode: global
+    extra_hosts:
+     - "logstash:${LOGSTASH_IP}"

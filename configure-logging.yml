@@ -1,0 +1,85 @@
+#!/usr/bin/env ansible-playbook
+---
+
+- name: Reconfigure host for journald and syslog forwarding to Logstash
+  hosts: "{{ variable_host | default('localhost')}}"
+  become: true
+
+  vars:
+    # change if required or override at runtime using --extra-vars
+
+  tasks:
+
+    - name: Docker service /lib/systemd/system/docker.service
+      lineinfile:
+        dest: /lib/systemd/system/docker.service
+        create: yes
+        state: present
+        regexp: '^ExecStart='
+        line: "ExecStart=/usr/bin/dockerd -H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375 --log-driver=journald --log-opt tag=\"img={{ '{{' }}.ImageName{{ '}}' }} name={{ '{{' }}.Name{{ '}}' }} cid={{ '{{' }}.ID{{ '}}' }}\" --log-opt labels=\"com.docker.swarm.service.name,com.docker.swarm.task.name\" --experimental=true --dns 8.8.8.8 --dns 8.8.4.4"
+      notify: Reload systemd
+      register: dockerd
+
+    - name: rsyslog /etc/rsyslog.conf
+      lineinfile:
+        dest: /etc/rsyslog.conf
+        create: yes
+        state: present
+        insertbefore: BOF
+        line: "$MaxMessageSize 64k"
+      notify: Reload systemd
+
+    - name: rsyslog 50-default.conf
+      lineinfile:
+        dest: /etc/rsyslog.d/50-default.conf
+        create: yes
+        state: present
+        insertbefore: BOF
+        line: "*.*                         @localhost:9514;json-template"
+      notify: Reload systemd
+
+    - name: rsyslog 01-json-template.conf
+      copy:
+        content: |-
+          template(name="json-template"
+            type="list") {
+              constant(value="{")
+                constant(value="\"@timestamp\":\"")     property(name="timereported" dateFormat="rfc3339")
+                constant(value="\",\"@version\":\"1")
+                constant(value="\",\"message\":\"")     property(name="msg" format="json")
+                constant(value="\",\"sysloghost\":\"")  property(name="hostname")
+                constant(value="\",\"severity\":\"")    property(name="syslogseverity-text")
+                constant(value="\",\"facility\":\"")    property(name="syslogfacility-text")
+                constant(value="\",\"programname\":\"") property(name="programname")
+                constant(value="\",\"procid\":\"")      property(name="procid")
+              constant(value="\"}\n")
+          }
+        force: yes 
+        dest: /etc/rsyslog.d/01-json-template.conf
+      notify: Reload systemd
+
+    - name: setup journald and syslog
+      lineinfile:
+        dest: /etc/systemd/journald.conf
+        create: yes
+        state: present
+        line: "ForwardToSyslog=yes"
+      notify: Reload systemd
+
+  handlers:
+    - name: Reload systemd
+      command: systemctl daemon-reload
+      notify:
+        - ensure rsyslog restarts
+        - ensure journald restarts
+        - ensure docker restarts
+
+    - name: ensure docker restarts
+      service: name=docker state=restarted enabled=yes
+      when: dockerd.changed
+
+    - name: ensure rsyslog restarts
+      service: name=rsyslog state=restarted enabled=yes
+
+    - name: ensure journald restarts
+      service: name=systemd-journald state=restarted enabled=yes
