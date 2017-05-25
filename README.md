@@ -101,8 +101,17 @@ You must make sure that ssh works to the remote host, and the remote user can su
 
 ## build using docker-compose
 
-docker-compose will pull down and/or build the necessary containers, and then launch the entire stack.  This can be done using:
+docker-compose will pull down and/or build the necessary containers, and then launch the entire stack.  This can be done using either:
+
 ```
+./compose-up.sh # looks for the IP of interfaces wlan0|eth0|ens3
+```
+
+or:
+
+```
+# set the IP address variable for the current server eg:
+export LOGSTASH_IP="1.2.3.4"
 docker-compose up
 ```
 From the project directory.  Add `-d` to background this.
